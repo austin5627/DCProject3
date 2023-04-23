@@ -3,7 +3,6 @@ extern crate serde;
 
 use std::collections::HashMap;
 use std::env::args;
-use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
