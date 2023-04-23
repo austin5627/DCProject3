@@ -4,7 +4,7 @@ extern crate serde;
 use std::collections::HashMap;
 use std::env::args;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::{io, thread};
 
 mod message;
 mod node;
@@ -97,14 +97,23 @@ fn read_config(filename: &str) -> (HashMap<i32, NodeData>, i32) {
 
     return (nodes, leader.expect("Leader not found"));
 }
-fn handle_message_layered_bfs(node: &mut Node, msg: Message, id: i32) -> bool {
+fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, m: i32) -> bool {
     match msg {
-        Message::Search(layer) => {
-            if node.free {
+        Message::Search(layer, max_layer) => {
+            if node.free || node.layer > layer + 1 {
                 node.free = false;
                 node.layer = layer + 1;
+                if let Some(parent) = node.parent {
+                    if !node.send(parent, Message::Reject) {
+                        return true;
+                    }
+                }
                 node.parent = Some(id);
-                if !node.send(id, Message::Ack) {
+                if node.layer + 1 <= max_layer {
+                    if !node.broadcast(Message::Search(node.layer, max_layer)) {
+                        return true;
+                    }
+                } else if !node.send(id, Message::Ack) {
                     return true;
                 }
             } else {
@@ -114,14 +123,21 @@ fn handle_message_layered_bfs(node: &mut Node, msg: Message, id: i32) -> bool {
             }
         }
         Message::Ack | Message::Reject => {
-            node.responses_received.insert(id, msg == Message::Ack);
+            node.acks_received.insert(id, msg == Message::Ack);
             if msg == Message::Ack {
-                node.children.push(id);
+                node.children.insert(id);
+            } else if msg == Message::Reject {
+                node.children.remove(&id);
             }
-            if node.responses_received.len() == node.neighbors.len() - 1 {
+            if node.acks_received.len() == node.neighbors.len() - 1 {
                 if let Some(parent) = node.parent {
-                    let child_added = node.responses_received.values().any(|&x| x);
-                    if !node.send(parent, Message::PhaseComplete(child_added)) {
+                    let child_added = node.acks_received.values().any(|&x| x);
+                    if node.starting_node {
+                        node.starting_node = false;
+                        if !node.send(parent, Message::PhaseComplete(child_added)) {
+                            return true;
+                        }
+                    } else if !node.send(parent, Message::Ack) {
                         return true;
                     }
                 } else {
@@ -129,31 +145,34 @@ fn handle_message_layered_bfs(node: &mut Node, msg: Message, id: i32) -> bool {
                         return true;
                     }
                 }
-                node.responses_received.clear();
+                node.acks_received.clear();
             }
         }
         Message::NewPhase(layer) => {
             if node.layer == layer {
-                if !node.broadcast(Message::Search(layer)) {
+                node.starting_node = true;
+                if !node.broadcast(Message::Search(layer, layer + m)) {
                     return true;
                 }
             } else if !node.children.is_empty() {
                 if !node.broadcast_tree(Message::NewPhase(layer)) {
                     return true;
                 }
-            } else if let Some(parent) = node.parent{
+            } else if let Some(parent) = node.parent {
                 node.send(parent, Message::PhaseComplete(false));
             }
         }
         Message::PhaseComplete(child_added) => {
-            node.responses_received.insert(id, child_added);
-            if node.responses_received.len() == node.children.len() {
-                let child_added = node.responses_received.values().any(|&x| x);
+            node.phase_complete_received.insert(id, child_added);
+            if node.phase_complete_received.len() == node.children.len() {
+                let child_added = node.phase_complete_received.values().any(|&x| x);
                 if let Some(parent) = node.parent {
                     if !node.send(parent, Message::PhaseComplete(child_added)) {
                         return true;
                     }
                 } else {
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input).unwrap();
                     if child_added {
                         node.layer += 1;
                         if !node.broadcast_tree(Message::NewPhase(node.layer)) {
@@ -164,7 +183,7 @@ fn handle_message_layered_bfs(node: &mut Node, msg: Message, id: i32) -> bool {
                         return true;
                     }
                 }
-                node.responses_received.clear();
+                node.phase_complete_received.clear();
             }
         }
         Message::Terminate => {
@@ -181,9 +200,10 @@ fn handle_message_layered_bfs(node: &mut Node, msg: Message, id: i32) -> bool {
 }
 
 fn layered_bfs(node_id: i32, nodes: HashMap<i32, NodeData>, leader: i32) {
+    let m = 3;
     let mut n = Node::new(node_id, nodes, leader);
     if node_id == leader {
-        n.broadcast(Message::Search(0));
+        n.broadcast(Message::Search(0, m));
     }
     let mut threads = Vec::new();
     let neighbors = n.neighbors.clone();
@@ -205,7 +225,12 @@ fn layered_bfs(node_id: i32, nodes: HashMap<i32, NodeData>, leader: i32) {
                 if msg != Message::Terminate {
                     debugln!("Node {} received {:?} from {}", node_id, msg, id);
                 }
-                let q = handle_message_layered_bfs(&mut node.lock().expect("Cannot get lock"), msg, id);
+                let q = handle_message_hybrid_bfs(
+                    &mut node.lock().expect("Cannot get lock"),
+                    msg,
+                    id,
+                    m,
+                );
                 if q {
                     break;
                 }

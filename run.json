@@ -3,7 +3,7 @@
         {
             "name": "run all",
             "command": "./launcher_local.sh",
-            "args": "-r",
+            "args": "-d",
             "term_opts": {
                 "close_on_exit": true
             },

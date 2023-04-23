@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub enum Message {
-    Search(i32), // Sender layer
+    Search(i32, i32), // Sender layer, max layer
     Ack,
     Reject,
     NewPhase(i32),
@@ -20,7 +20,7 @@ pub enum Message {
 impl Debug for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Message::Search(l) => write!(f, "{}({})", "Search".blue(), l),
+            Message::Search(l, m) => write!(f, "{}({}, {})", "Search".blue(), l, m),
             Message::Ack => write!(f, "{}", "Ack".green()),
             Message::Reject => write!(f, "{}", "Reject".red()),
             Message::NewPhase(l) => write!(f, "{}({})", "NewPhase".cyan(), l),

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread::sleep;
@@ -25,10 +25,12 @@ pub struct Node {
     pub listeners: HashMap<i32, TcpStream>,
     pub free: bool,
     pub parent: Option<i32>,
-    pub children: Vec<i32>,
+    pub children: HashSet<i32>,
     pub neighbors: Vec<i32>,
     pub layer: i32,
-    pub responses_received: HashMap<i32, bool>,
+    pub starting_node: bool,
+    pub phase_complete_received: HashMap<i32, bool>,
+    pub acks_received: HashMap<i32, bool>,
 }
 
 impl Node {
@@ -38,10 +40,12 @@ impl Node {
             listeners: HashMap::new(),
             free: leader != id,
             parent: None,
-            children: Vec::new(),
+            children: HashSet::new(),
             neighbors: data[&id].neighbors.clone(),
             layer: if id == leader { 0 } else { -1 },
-            responses_received: HashMap::new(),
+            starting_node: id == leader,
+            phase_complete_received: HashMap::new(),
+            acks_received: HashMap::new(),
         };
         node.connect_to_neighbors(data);
         return node;
@@ -128,13 +132,14 @@ impl Node {
 impl Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
-            .field("id", &self.id)
-            .field("\nfree", &self.free)
-            .field("\nparent", &self.parent)
-            .field("\nchildren", &self.children)
-            .field("\nneighbors", &self.neighbors)
-            .field("\nlayer", &self.layer)
-            .field("\nresponses_received", &self.responses_received)
+            .field("\n\tid", &self.id)
+            .field("\n\tfree", &self.free)
+            .field("\n\tparent", &self.parent)
+            .field("\n\tchildren", &self.children)
+            .field("\n\tneighbors", &self.neighbors)
+            .field("\n\tlayer", &self.layer)
+            .field("\n\tresponses_received", &self.phase_complete_received)
+            .field("\n\tacks_received", &self.acks_received)
             .field("\n", &"")
             .finish()
     }
