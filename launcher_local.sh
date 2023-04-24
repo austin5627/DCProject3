@@ -8,7 +8,7 @@ else
     DEBUG=0
 fi
 
-CONFIG_LOCAL=./config_local.txt
+CONFIG_LOCAL=../project2/config.txt
 PROGRAM=project3
 
 if [[ $DEBUG -eq 1 ]]

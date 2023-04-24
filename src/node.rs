@@ -119,7 +119,7 @@ impl Node {
 
     pub fn send(&mut self, id: i32, msg: Message) -> bool {
         let listener = &mut self.listeners.get_mut(&id).expect("No listener for id");
-        debugln!("Sent {:?} to {}", msg, id);
+        println!("Sent {:?} to {}", msg, id);
         let ok = send_message(msg, listener);
         if let Err(_) = ok {
             return false;
@@ -132,15 +132,15 @@ impl Node {
 impl Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
-            .field("\n\tid", &self.id)
-            .field("\n\tfree", &self.free)
-            .field("\n\tparent", &self.parent)
-            .field("\n\tchildren", &self.children)
-            .field("\n\tneighbors", &self.neighbors)
-            .field("\n\tlayer", &self.layer)
-            .field("\n\tresponses_received", &self.phase_complete_received)
-            .field("\n\tacks_received", &self.acks_received)
-            .field("\n", &"")
+            .field("id", &self.id)
+            .field("free", &self.free)
+            .field("parent", &self.parent)
+            .field("starting_node", &self.starting_node)
+            .field("children", &self.children)
+            .field("neighbors", &self.neighbors)
+            .field("layer", &self.layer)
+            .field("responses_received", &self.phase_complete_received)
+            .field("acks_received", &self.acks_received)
             .finish()
     }
 }

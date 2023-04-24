@@ -4,7 +4,7 @@ extern crate serde;
 use std::collections::HashMap;
 use std::env::args;
 use std::sync::{Arc, Mutex};
-use std::{io, thread};
+use std::thread;
 
 mod message;
 mod node;
@@ -27,7 +27,7 @@ fn read_config(filename: &str) -> (HashMap<i32, NodeData>, i32) {
     let mut lines = file_string
         .lines()
         .map(|line| line.trim())
-        .filter(|line| line.starts_with(|c: char| c.is_digit(10) || c == '('));
+        .filter(|line| line.starts_with(|c: char| c.is_digit(10) || c == '(' || c == ')'));
 
     let num_nodes = lines
         .next()
@@ -97,29 +97,22 @@ fn read_config(filename: &str) -> (HashMap<i32, NodeData>, i32) {
 
     return (nodes, leader.expect("Leader not found"));
 }
-fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, m: i32) -> bool {
+fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, layers_per_phase: i32) -> bool {
     match msg {
         Message::Search(layer, max_layer) => {
             if node.free || node.layer > layer + 1 {
                 node.free = false;
                 node.layer = layer + 1;
                 if let Some(parent) = node.parent {
-                    if !node.send(parent, Message::Reject) {
-                        return true;
-                    }
+                    node.send(parent, Message::Reject);
                 }
                 node.parent = Some(id);
                 if node.layer + 1 <= max_layer {
-                    if !node.broadcast(Message::Search(node.layer, max_layer)) {
-                        return true;
-                    }
-                } else if !node.send(id, Message::Ack) {
-                    return true;
+                    node.broadcast(Message::Search(node.layer, max_layer));
                 }
+                node.send(id, Message::Ack);
             } else {
-                if !node.send(id, Message::Reject) {
-                    return true;
-                }
+                node.send(id, Message::Reject);
             }
         }
         Message::Ack | Message::Reject => {
@@ -129,21 +122,23 @@ fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, m: i32) -> 
             } else if msg == Message::Reject {
                 node.children.remove(&id);
             }
-            if node.acks_received.len() == node.neighbors.len() - 1 {
+            let should_send = if node.parent.is_some() {
+                node.acks_received.len() == node.neighbors.len() - 1
+            } else {
+                node.acks_received.len() == node.neighbors.len()
+            };
+            if should_send {
                 if let Some(parent) = node.parent {
                     let child_added = node.acks_received.values().any(|&x| x);
                     if node.starting_node {
                         node.starting_node = false;
-                        if !node.send(parent, Message::PhaseComplete(child_added)) {
-                            return true;
-                        }
-                    } else if !node.send(parent, Message::Ack) {
-                        return true;
+                        node.send(parent, Message::PhaseComplete(child_added));
+                    } else {
+                        node.send(parent, Message::Ack);
                     }
                 } else {
-                    if !node.broadcast_tree(Message::NewPhase(node.layer + 1)) {
-                        return true;
-                    }
+                    node.layer += 1;
+                    node.broadcast_tree(Message::NewPhase(node.layer));
                 }
                 node.acks_received.clear();
             }
@@ -151,13 +146,9 @@ fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, m: i32) -> 
         Message::NewPhase(layer) => {
             if node.layer == layer {
                 node.starting_node = true;
-                if !node.broadcast(Message::Search(layer, layer + m)) {
-                    return true;
-                }
+                node.broadcast(Message::Search(layer, layer + layers_per_phase));
             } else if !node.children.is_empty() {
-                if !node.broadcast_tree(Message::NewPhase(layer)) {
-                    return true;
-                }
+                node.broadcast_tree(Message::NewPhase(layer));
             } else if let Some(parent) = node.parent {
                 node.send(parent, Message::PhaseComplete(false));
             }
@@ -167,17 +158,11 @@ fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, m: i32) -> 
             if node.phase_complete_received.len() == node.children.len() {
                 let child_added = node.phase_complete_received.values().any(|&x| x);
                 if let Some(parent) = node.parent {
-                    if !node.send(parent, Message::PhaseComplete(child_added)) {
-                        return true;
-                    }
+                    node.send(parent, Message::PhaseComplete(child_added));
                 } else {
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input).unwrap();
                     if child_added {
                         node.layer += 1;
-                        if !node.broadcast_tree(Message::NewPhase(node.layer)) {
-                            return true;
-                        }
+                        node.broadcast_tree(Message::NewPhase(node.layer));
                     } else {
                         node.broadcast(Message::Terminate);
                         return true;
@@ -194,16 +179,15 @@ fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, m: i32) -> 
             panic!("Unexpected message type");
         }
     }
-    debugln!("{:?}", node);
+    debugln!("{:#?}", node);
 
     return false;
 }
 
-fn layered_bfs(node_id: i32, nodes: HashMap<i32, NodeData>, leader: i32) {
-    let m = 3;
+fn hybrid_bfs(node_id: i32, nodes: HashMap<i32, NodeData>, leader: i32, layers_per_phase: i32) {
     let mut n = Node::new(node_id, nodes, leader);
     if node_id == leader {
-        n.broadcast(Message::Search(0, m));
+        n.broadcast(Message::Search(0, layers_per_phase));
     }
     let mut threads = Vec::new();
     let neighbors = n.neighbors.clone();
@@ -223,15 +207,16 @@ fn layered_bfs(node_id: i32, nodes: HashMap<i32, NodeData>, leader: i32) {
             let msg_op = recv_message(&mut listener);
             if let Some(msg) = msg_op {
                 if msg != Message::Terminate {
-                    debugln!("Node {} received {:?} from {}", node_id, msg, id);
+                    println!("Node {} received {:?} from {}", node_id, msg, id);
                 }
                 let q = handle_message_hybrid_bfs(
                     &mut node.lock().expect("Cannot get lock"),
                     msg,
                     id,
-                    m,
+                    layers_per_phase,
                 );
                 if q {
+                    println!("Node {} finished", id);
                     break;
                 }
             } else {
@@ -247,7 +232,10 @@ fn layered_bfs(node_id: i32, nodes: HashMap<i32, NodeData>, leader: i32) {
         t.join().expect("Thread failed");
     }
     let node = node.lock().expect("Cannot get lock");
-    println!("Node {} finished", node_id);
+    println!();
+    println!();
+    println!();
+    println!("Node {}", node_id);
     if let Some(parent) = node.parent {
         println!("Depth: {}", node.layer);
         println!("Parent: {}", parent);
@@ -260,13 +248,16 @@ fn layered_bfs(node_id: i32, nodes: HashMap<i32, NodeData>, leader: i32) {
 
 fn main() {
     let args: Vec<String> = args().collect();
-    if args.len() != 3 {
-        println!("Usage: {} <config file> <node id>", args[0]);
+    if args.len() < 3 {
+        println!("Usage: {} <config file> <node id> [layers per phase]", args[0]);
         return;
     }
+    let (nodes, leader) = read_config(&args[1]);
     let node_id = args[2].parse::<i32>().expect("Node id must be an integer");
     println!("Starting node {}...", node_id);
-
-    let (nodes, leader) = read_config(&args[1]);
-    layered_bfs(node_id, nodes, leader);
+    let layers_per_phase = match args.get(3) {
+        Some(x) => x.parse::<i32>().expect("Layers per phase must be an integer"),
+        None => 1,
+    };
+    hybrid_bfs(node_id, nodes, leader, layers_per_phase);
 }
