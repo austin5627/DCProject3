@@ -22,7 +22,7 @@ pub struct NodeData {
 
 pub struct Node {
     pub id: i32,
-    pub listeners: HashMap<i32, TcpStream>,
+    pub sockets: HashMap<i32, TcpStream>,
     pub free: bool,
     pub parent: Option<i32>,
     pub children: HashSet<i32>,
@@ -37,7 +37,7 @@ impl Node {
     pub fn new(id: i32, data: HashMap<i32, NodeData>, leader: i32) -> Node {
         let mut node = Node {
             id,
-            listeners: HashMap::new(),
+            sockets: HashMap::new(),
             free: leader != id,
             parent: None,
             children: HashSet::new(),
@@ -89,7 +89,7 @@ impl Node {
             let msg = recv_message(&mut socket).expect("Unable to receive message");
             if let Message::Connect(other_id) = msg {
                 debugln!("Connection established with {} {}", addr, other_id);
-                self.listeners.insert(other_id, socket);
+                self.sockets.insert(other_id, socket);
             } else {
                 panic!("Unexpected message type");
             }
@@ -118,7 +118,7 @@ impl Node {
     }
 
     pub fn send(&mut self, id: i32, msg: Message) -> bool {
-        let listener = &mut self.listeners.get_mut(&id).expect("No listener for id");
+        let listener = self.sockets.get_mut(&id).unwrap();
         println!("Sent {:?} to {}", msg, id);
         let ok = send_message(msg, listener);
         if let Err(_) = ok {

@@ -3,7 +3,7 @@ extern crate serde;
 
 use std::collections::HashMap;
 use std::env::args;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::channel;
 use std::thread;
 
 mod message;
@@ -95,9 +95,15 @@ fn read_config(filename: &str) -> (HashMap<i32, NodeData>, i32) {
         node.edges.sort_by(|a, b| a.1.cmp(&b.1));
     }
 
-    return (nodes, leader.expect("Leader not found"));
+    return (nodes, leader.unwrap());
 }
-fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, layers_per_phase: i32) -> bool {
+fn handle_message_hybrid_bfs(
+    node: &mut Node,
+    msg: Message,
+    id: i32,
+    layers_per_phase: i32,
+) -> bool {
+    println!("Received: {:?} from {}", msg, id);
     match msg {
         Message::Search(layer, max_layer) => {
             if node.free || node.layer > layer + 1 {
@@ -109,8 +115,9 @@ fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, layers_per_
                 node.parent = Some(id);
                 if node.layer + 1 <= max_layer {
                     node.broadcast(Message::Search(node.layer, max_layer));
+                } else {
+                    node.send(id, Message::Ack);
                 }
-                node.send(id, Message::Ack);
             } else {
                 node.send(id, Message::Reject);
             }
@@ -185,53 +192,35 @@ fn handle_message_hybrid_bfs(node: &mut Node, msg: Message, id: i32, layers_per_
 }
 
 fn hybrid_bfs(node_id: i32, nodes: HashMap<i32, NodeData>, leader: i32, layers_per_phase: i32) {
-    let mut n = Node::new(node_id, nodes, leader);
+    let mut node = Node::new(node_id, nodes, leader);
     if node_id == leader {
-        n.broadcast(Message::Search(0, layers_per_phase));
+        node.broadcast(Message::Search(0, layers_per_phase));
     }
     let mut threads = Vec::new();
-    let neighbors = n.neighbors.clone();
-    let node = Arc::new(Mutex::new(n));
-    for i in 0..neighbors.len() {
-        let node = node.clone();
-        let id = neighbors[i];
-        let mut listener = node
-            .lock()
-            .expect("Cannot get lock")
-            .listeners
-            .get_mut(&id)
-            .expect("Listener not found")
-            .try_clone()
-            .expect("Cannot clone listener");
+    let (tx, rx) = channel::<(i32, Message)>();
+    for id in node.neighbors.iter() {
+        let mut socket = node.sockets[&id].try_clone().unwrap();
+        let tx = tx.clone();
+        let id = *id;
         let t = thread::spawn(move || loop {
-            let msg_op = recv_message(&mut listener);
+            let msg_op = recv_message(&mut socket);
             if let Some(msg) = msg_op {
-                if msg != Message::Terminate {
-                    println!("Node {} received {:?} from {}", node_id, msg, id);
-                }
-                let q = handle_message_hybrid_bfs(
-                    &mut node.lock().expect("Cannot get lock"),
-                    msg,
-                    id,
-                    layers_per_phase,
-                );
-                if q {
-                    println!("Node {} finished", id);
+                if let Err(_) = tx.send((id, msg)) {
                     break;
                 }
             } else {
-                node.lock()
-                    .expect("Cannot get lock")
-                    .broadcast(Message::Terminate);
                 break;
             }
         });
         threads.push(t);
     }
-    for t in threads {
-        t.join().expect("Thread failed");
+
+    loop {
+        let (id, msg) = rx.recv().expect("Cannot receive message");
+        if handle_message_hybrid_bfs(&mut node, msg, id, layers_per_phase) {
+            break;
+        }
     }
-    let node = node.lock().expect("Cannot get lock");
     println!();
     println!();
     println!();
@@ -249,14 +238,19 @@ fn hybrid_bfs(node_id: i32, nodes: HashMap<i32, NodeData>, leader: i32, layers_p
 fn main() {
     let args: Vec<String> = args().collect();
     if args.len() < 3 {
-        println!("Usage: {} <config file> <node id> [layers per phase]", args[0]);
+        println!(
+            "Usage: {} <config file> <node id> [layers per phase]",
+            args[0]
+        );
         return;
     }
     let (nodes, leader) = read_config(&args[1]);
     let node_id = args[2].parse::<i32>().expect("Node id must be an integer");
     println!("Starting node {}...", node_id);
     let layers_per_phase = match args.get(3) {
-        Some(x) => x.parse::<i32>().expect("Layers per phase must be an integer"),
+        Some(x) => x
+            .parse::<i32>()
+            .expect("Layers per phase must be an integer"),
         None => 1,
     };
     hybrid_bfs(node_id, nodes, leader, layers_per_phase);

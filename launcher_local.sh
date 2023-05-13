@@ -8,7 +8,7 @@ else
     DEBUG=0
 fi
 
-CONFIG_LOCAL=./config.txt
+CONFIG_LOCAL=./config_local.txt
 PROGRAM=project3
 
 if [[ $DEBUG -eq 1 ]]
@@ -30,7 +30,7 @@ cat $CONFIG_LOCAL | sed -e "s/#.*//" | sed -e "/^\s*$/d" |
         p=$( echo $line | awk '{ print $1 }' )
         host=$( echo $line | awk '{ print $2 }' )
         # export RUST_BACKTRACE=1
-        kitty --hold -e $BINARY_DIR/$PROGRAM $CONFIG_LOCAL $p &
+        kitty --hold -e $BINARY_DIR/$PROGRAM $CONFIG_LOCAL $p 1 &
         n=$(( n + 1 ))
     done
     wait
